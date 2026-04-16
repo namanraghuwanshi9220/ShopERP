@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useInventoryStore } from '../store/useInventoryStore';
 import { useShopStore } from '../store/useShopStore';
 import { useBillStore } from '../store/useBillStore';
 import { useToastStore } from '../store/useToastStore';
-import { generateBill } from '../firebase/db';
-import { Search, Plus, Minus, Trash2, Printer } from 'lucide-react';
+import { generateBill, generateEstimate } from '../firebase/db';
+import { Printer, ShoppingCart, CheckCircle2, Smartphone, Shield, Layers, Package } from 'lucide-react';
 import PrintBill from '../components/PrintBill';
+import DraftsModal from '../components/DraftsModal';
+import InventoryPanel from '../components/InventoryPanel';
+import CartSidebar from '../components/CartSidebar';
 
 export default function NewBill() {
   const { user } = useAuthStore();
@@ -16,160 +19,251 @@ export default function NewBill() {
   const { addToast } = useToastStore();
 
   const [search, setSearch] = useState('');
-  const [cart, setCart] = useState([]);
-  const [customer, setCustomer] = useState({ name: '', phone: '' });
-  const [settings, setSettings] = useState({ discount: 0, gst: 0, paymentMode: 'Cash' });
+  const [activeFolder, setActiveFolder] = useState(null); 
   const [generating, setGenerating] = useState(false);
   const [printedBill, setPrintedBill] = useState(null);
+  const [isCartOpen, setIsCartOpen] = useState(false);
 
+  // SAFE INITIALIZATION STATE
+  const [cart, setCart] = useState([]);
+  const [customer, setCustomer] = useState({ name: '', phone: '', address: '' });
+  const [settings, setSettings] = useState({ discount: 0, gst: 0, paymentMode: 'Cash' });
+  const [finance, setFinance] = useState({ provider: 'Bajaj Finserv', downPayment: '', emiMonths: '', emiAmount: '' });
+
+  const [drafts, setDrafts] = useState([]);
+  const [isDraftsModalOpen, setIsDraftsModalOpen] = useState(false);
+
+  // EDGE CASE FIX: Ref for Mount & Auto-Save Debouncing
+  const isInitialMount = useRef(true);
+  const debounceTimer = useRef(null);
+
+  // EDGE CASE FIX 1: LOAD ONLY ONCE ON MOUNT
   useEffect(() => { 
-    if (user) fetchItems(user.uid); 
-    if (profile) setSettings(s => ({ ...s, gst: profile.defaultGST || 0 }));
-  }, [user, profile, fetchItems]);
-
-  const filteredItems = (items || []).filter(i => i.stock > 0 && (i.name || '').toLowerCase().includes(search.toLowerCase()));
-
-  const addToCart = (item) => {
-    const existing = cart.find(c => c.id === item.id);
-    if (existing) {
-      if (existing.qty >= item.stock) return addToast("Not enough stock", "error");
-      setCart(cart.map(c => c.id === item.id ? { ...c, qty: c.qty + 1 } : c));
-    } else setCart([...cart, { ...item, qty: 1 }]);
-  };
-
-  const updateQty = (id, newQty) => {
-    setCart(cart.map(c => {
-      if (c.id === id) {
-        const itemStock = items.find(i => i.id === id)?.stock || 0;
-        const finalQty = Math.max(0, Number(newQty));
-        if (finalQty > itemStock) { addToast("Stock limit reached", "error"); return c; }
-        return { ...c, qty: finalQty };
+    if (user && items.length === 0) fetchItems(user.uid); 
+    
+    try {
+      const savedDrafts = JSON.parse(localStorage.getItem('pos_drafts_list') || '[]');
+      setDrafts(Array.isArray(savedDrafts) ? savedDrafts : []);
+      
+      const activeSession = localStorage.getItem('pos_active_session');
+      if (activeSession) {
+        const parsed = JSON.parse(activeSession);
+        // Load data safely
+        setCart(Array.isArray(parsed.cart) ? parsed.cart : []); 
+        setCustomer(parsed.customer || { name: '', phone: '', address: '' });
+        setSettings(parsed.settings || { discount: 0, gst: profile?.defaultGST || 0, paymentMode: 'Cash' });
+        setFinance(parsed.finance || { provider: 'Bajaj Finserv', downPayment: '', emiMonths: '', emiAmount: '' });
+      } else if (profile) {
+        setSettings(s => ({ ...s, gst: profile.defaultGST || 0 }));
       }
-      return c;
-    }).filter(c => c.qty > 0)); 
+    } catch (e) { 
+      console.error("Storage Recovery Error:", e); 
+      // Reset if corrupted
+      localStorage.removeItem('pos_active_session');
+    }
+  }, [user, profile?.defaultGST]); // Empty array nahi kiya warna user badal jaye toh fas jayega, but safe dependency di hai.
+
+  // EDGE CASE FIX 2: AUTO-SAVE DEBOUNCE (Stops Infinite Render Loops)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    
+    // Save only after 800ms of user inactivity (Smart Auto-save)
+    debounceTimer.current = setTimeout(() => {
+      try {
+        if (cart.length > 0 || customer.name || customer.phone) {
+          localStorage.setItem('pos_active_session', JSON.stringify({ cart, customer, settings, finance }));
+        }
+      } catch (e) { console.error("Auto-save Failed:", e); }
+    }, 800);
+
+    return () => clearTimeout(debounceTimer.current);
+  }, [cart, customer, settings, finance]);
+
+  // EDGE CASE FIX 3: SAFE MEMOIZATION
+  const categoryStats = useMemo(() => {
+    const stats = {}; 
+    (items || []).forEach(item => { if ((item.stock || 0) > 0) stats[item.category] = (stats[item.category] || 0) + 1; });
+    
+    return [
+      { name: 'Mobile', count: stats['Mobile'] || 0, icon: Smartphone, color: 'bg-blue-100 text-blue-700 border-blue-200' },
+      { name: 'Cover', count: stats['Cover'] || 0, icon: Shield, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+      { name: 'Glass', count: stats['Glass'] || 0, icon: Layers, color: 'bg-teal-100 text-teal-700 border-teal-200' },
+      { name: 'Accessories', count: stats['Accessories'] || 0, icon: Package, color: 'bg-orange-100 text-orange-700 border-orange-200' },
+      { name: 'Other', count: stats['Other'] || 0, icon: Package, color: 'bg-gray-100 text-gray-700 border-gray-200' }
+    ].filter(c => c.count > 0);
+  }, [items]);
+
+  const searchResults = useMemo(() => {
+    if (!search || !search.trim()) return [];
+    return (items || []).filter(i => (i.stock || 0) > 0 && `${i.name || ''} ${i.imei || ''} ${i.sku || ''}`.toLowerCase().includes(search.toLowerCase()));
+  }, [search, items]);
+
+  const folderItems = useMemo(() => {
+    return (items || []).filter(i => (i.stock || 0) > 0 && i.category === activeFolder);
+  }, [items, activeFolder]);
+
+  // CART ADD LOGIC (Wrapped in useCallback for performance)
+  const processAddToCart = useCallback((item, selectedImei = '') => {
+    setCart(prev => {
+      const existingIndex = prev.findIndex(c => c.id === item.id && c.soldImei === selectedImei);
+      if (existingIndex >= 0) {
+        if (prev[existingIndex].qty >= (item.stock || 0)) {
+          addToast("Stock limit reached", "error");
+          return prev;
+        }
+        const newCart = [...prev];
+        newCart[existingIndex] = { ...newCart[existingIndex], qty: Number(newCart[existingIndex].qty) + 1 };
+        return newCart;
+      }
+      return [...prev, { ...item, qty: 1, soldImei: selectedImei, cartPrice: Number(item.price || 0) }];
+    });
+    setIsCartOpen(true); 
+    setSearch('');
+  }, [addToast]);
+
+  const handleCardClick = useCallback((item) => {
+    const imeis = item.imei ? item.imei.split(',').filter(Boolean) : [];
+    if (item.category === 'Mobile' && imeis.length > 0) addToast("Click an IMEI number to add.", "info");
+    else processAddToCart(item, ''); 
+  }, [addToast, processAddToCart]);
+
+  const handleSearchEnter = (e) => {
+    if (e.key === 'Enter' && search.trim() !== '') {
+      const exactImeiMatch = (items || []).find(i => i.imei?.includes(search.trim()) && (i.stock || 0) > 0);
+      if (exactImeiMatch) processAddToCart(exactImeiMatch, search.trim());
+      setSearch('');
+    }
   };
 
-  const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
-  const discountAmt = subtotal * (settings.discount / 100);
-  const afterDiscount = subtotal - discountAmt;
-  const gstAmt = afterDiscount * (settings.gst / 100);
-  const total = afterDiscount + gstAmt;
+  // CART MODIFIERS (Strict NaN and Empty Value Checks)
+  const updateQty = (id, soldImei, newQty) => {
+    setCart(prev => prev.map(c => (c.id === id && c.soldImei === soldImei) ? { ...c, qty: Math.max(0, Number(newQty) || 0) } : c).filter(c => c.qty > 0));
+  };
+  const updatePrice = (id, soldImei, newPrice) => {
+    setCart(prev => prev.map(c => (c.id === id && c.soldImei === soldImei) ? { ...c, cartPrice: newPrice } : c)); // Keeps string for input editing
+  };
+  const sanitizePrice = (id, soldImei, val) => { 
+    let num = parseFloat(val); if (isNaN(num) || num < 0) num = 0; 
+    setCart(prev => prev.map(c => (c.id === id && c.soldImei === soldImei) ? { ...c, cartPrice: Number(num.toFixed(2)) } : c)); 
+  };
+  const sanitizeQty = (id, soldImei, val) => { 
+    let num = parseFloat(val); 
+    if (isNaN(num) || num <= 0) setCart(prev => prev.filter(c => !(c.id === id && c.soldImei === soldImei))); 
+    else setCart(prev => prev.map(c => (c.id === id && c.soldImei === soldImei) ? { ...c, qty: num } : c)); 
+  };
+  const removeCartItem = (id, soldImei) => setCart(prev => prev.filter(c => !(c.id === id && c.soldImei === soldImei)));
 
-  const handleGenerate = async () => {
+  // DRAFT LOGIC
+  const holdCurrentBill = () => {
+    if (cart.length === 0 && !customer.name) return addToast("Cart is empty!", "error");
+    const newDraft = { 
+      id: Date.now(), 
+      date: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' }), 
+      customerName: customer.name || "Unknown", itemCount: cart.length, total: totalPakka, 
+      data: { cart, customer, settings, finance } 
+    };
+    const updatedDrafts = [newDraft, ...drafts]; 
+    setDrafts(updatedDrafts); localStorage.setItem('pos_drafts_list', JSON.stringify(updatedDrafts));
+    clearActiveSession("Bill saved to Drafts"); setIsCartOpen(false);
+  };
+
+  const resumeDraft = (draft) => {
+    setCart(draft.data.cart || []); setCustomer(draft.data.customer || {}); setSettings(draft.data.settings || {}); setFinance(draft.data.finance || {});
+    const updatedDrafts = drafts.filter(d => d.id !== draft.id); 
+    setDrafts(updatedDrafts); localStorage.setItem('pos_drafts_list', JSON.stringify(updatedDrafts));
+    setIsDraftsModalOpen(false); setIsCartOpen(true); addToast("Draft loaded!");
+  };
+
+  const deleteDraft = (id) => { 
+    if(confirm("Delete this draft?")) { 
+      const updatedDrafts = drafts.filter(d => d.id !== id); 
+      setDrafts(updatedDrafts); localStorage.setItem('pos_drafts_list', JSON.stringify(updatedDrafts)); 
+    } 
+  };
+
+  const clearActiveSession = (msg = "Cart cleared") => {
+    setCart([]); setCustomer({ name: '', phone: '', address: '' }); 
+    setSettings({ discount: 0, gst: profile?.defaultGST || 0, paymentMode: 'Cash' }); 
+    setFinance({ provider: 'Bajaj Finserv', downPayment: '', emiMonths: '', emiAmount: '' });
+    localStorage.removeItem('pos_active_session'); if(msg) addToast(msg, "success");
+  };
+
+  // EDGE CASE FIX 4: MATH NaN FALLBACKS
+  const subtotal = cart.reduce((acc, item) => acc + ((Number(item.cartPrice) || 0) * (Number(item.qty) || 1)), 0);
+  const discountAmt = subtotal * ((Number(settings.discount) || 0) / 100);
+  const afterDiscount = subtotal - discountAmt;
+  const totalGstAmt = afterDiscount * ((Number(settings.gst) || 0) / 100);
+  const totalPakka = afterDiscount + totalGstAmt;
+  const totalKaccha = afterDiscount;
+
+  const handleCheckout = async (isEstimate) => {
     if (cart.length === 0) return addToast("Cart is empty", "error");
     setGenerating(true);
     try {
-      const billData = {
-        customerName: customer.name, customerPhone: customer.phone,
-        items: cart.map(c => ({ id: c.id, name: c.name, price: c.price, qty: c.qty, unit: c.unit || 'Pcs' })),
-        subtotal, discount: discountAmt, gst: gstAmt, total, paymentMode: settings.paymentMode
+      const payload = {
+        customerName: customer.name || "", customerPhone: customer.phone || "", customerAddress: customer.address || "",
+        items: cart.map(c => ({ 
+          id: c.id, name: c.name || "Unknown", price: Number(c.cartPrice || 0), qty: Number(c.qty || 1), unit: c.unit || 'Pcs', 
+          category: c.category || "", ram: c.ram || "", rom: c.rom || "", color: c.color || "", soldImei: c.soldImei || "" 
+        })),
+        subtotal: Number(subtotal || 0), discount: Number(discountAmt || 0), 
+        gstPercent: isEstimate ? 0 : Number(settings.gst || 0), gstAmt: isEstimate ? 0 : Number(totalGstAmt || 0), 
+        cgstAmt: isEstimate ? 0 : Number((totalGstAmt / 2) || 0), sgstAmt: isEstimate ? 0 : Number((totalGstAmt / 2) || 0), 
+        total: isEstimate ? Number(totalKaccha || 0) : Number(totalPakka || 0), 
+        paymentMode: settings.paymentMode || "Cash", isEstimate
       };
       
-      const finalBill = await generateBill(user.uid, billData, cart);
+      if (settings.paymentMode === 'Finance') {
+        payload.financeDetails = { 
+          provider: finance.provider || "", downPayment: Number(finance.downPayment || 0), 
+          emiMonths: Number(finance.emiMonths || 0), emiAmount: Number(finance.emiAmount || 0) 
+        };
+      }
       
-      addLocalBill(finalBill);
-      setPrintedBill(finalBill); // Set bill to print
+      let finalBill = isEstimate ? await generateEstimate(user.uid, payload, cart) : await generateBill(user.uid, payload, cart);
       
-      // Clear Cart
-      setCart([]); setCustomer({ name: '', phone: '' });
-      fetchItems(user.uid); 
-      addToast("Bill generated successfully!");
+      if (!isEstimate) addLocalBill(finalBill);
       
+      setPrintedBill(finalBill); 
+      clearActiveSession(null); setIsCartOpen(false); 
+      if (user) await fetchItems(user.uid); // Refresh stock strictly
+      addToast("Success!", "success");
     } catch (error) { 
-      console.error(error);
-      addToast("Error generating bill", 'error'); 
+      addToast("Error generating bill", 'error'); console.error("Checkout Error:", error);
     } finally { 
       setGenerating(false); 
     }
   };
 
-  // Safe Print Execution
-  const handlePrint = () => {
-    setTimeout(() => { window.print(); }, 100);
-  };
-
   if (printedBill) return (
     <div className="flex flex-col h-full bg-white relative print:bg-white print:fixed print:inset-0 print:z-50">
-      <div className="print:hidden p-4 border-b flex justify-between items-center bg-gray-50">
-        <h2 className="text-xl font-bold text-green-600">Bill Generated Successfully!</h2>
-        <div className="space-x-4 flex">
-          <button onClick={() => setPrintedBill(null)} className="px-4 py-2 border rounded-lg hover:bg-gray-100 font-medium">Create New Bill</button>
-          <button onClick={handlePrint} className="flex items-center gap-2 px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark font-medium"><Printer size={20}/> Print Bill</button>
-        </div>
+      <div className="print:hidden p-5 border-b flex justify-between items-center bg-gray-50">
+        <h2 className={`text-2xl font-black flex items-center gap-2 ${printedBill.isEstimate ? 'text-amber-600' : 'text-green-600'}`}><CheckCircle2 size={28} /> {printedBill.isEstimate ? 'Estimate Created!' : 'Bill Generated!'}</h2>
+        <div className="space-x-4 flex"><button onClick={() => setPrintedBill(null)} className="px-5 py-2.5 border-2 border-gray-200 rounded-xl hover:bg-gray-100 font-bold text-gray-700">New Bill</button><button onClick={() => window.print()} className="flex items-center gap-2 px-8 py-2.5 bg-primary text-white rounded-xl font-black shadow-md uppercase"><Printer size={20}/> Print</button></div>
       </div>
       <div className="flex-1 overflow-auto bg-white p-4 print:p-0"><PrintBill bill={printedBill} profile={profile} /></div>
     </div>
   );
 
   return (
-    <div className="h-full flex flex-col lg:flex-row gap-6 print:hidden">
-      <div className="flex-1 flex flex-col space-y-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100 h-full">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-          <input type="text" placeholder="Search to filter items..." className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-primary focus:border-primary outline-none" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        
-        <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 p-1">
-          {filteredItems.map(item => (
-            <div key={item.id} onClick={() => addToCart(item)} className="border border-gray-200 rounded-lg p-3 cursor-pointer hover:bg-green-50 hover:border-primary transition flex flex-col justify-between h-24 shadow-sm">
-              <div className="font-bold text-gray-800 text-sm truncate" title={item.name}>{item.name}</div>
-              <div className="flex justify-between items-end mt-2">
-                <div className="text-xs text-gray-500">Stock: {item.stock} {item.unit || 'Pcs'}</div>
-                <div className="font-bold text-primary">{profile?.currency || '₹'}{(item.price || 0).toFixed(2)}</div>
-              </div>
-            </div>
-          ))}
-          {filteredItems.length === 0 && <div className="col-span-full text-center py-10 text-gray-400">No items available</div>}
-        </div>
-      </div>
+    <div className="h-full relative print:hidden">
+      <InventoryPanel search={search} setSearch={setSearch} handleSearchEnter={handleSearchEnter} activeFolder={activeFolder} setActiveFolder={setActiveFolder} categoryStats={categoryStats} searchResults={searchResults} folderItems={folderItems} handleCardClick={handleCardClick} processAddToCart={processAddToCart} currency={profile?.currency || '₹'} />
 
-      <div className="w-full lg:w-[450px] flex flex-col space-y-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 flex flex-col overflow-hidden max-h-[350px]">
-          <div className="p-3 border-b bg-gray-50 font-bold text-gray-700">Cart Items ({cart.length})</div>
-          <div className="overflow-y-auto flex-1 p-2">
-            {cart.map(item => (
-              <div key={item.id} className="flex items-center justify-between p-2 border-b last:border-0 hover:bg-gray-50">
-                <div className="flex-1">
-                  <p className="font-medium text-sm text-gray-800">{item.name}</p>
-                  <p className="text-xs text-gray-500">@ {profile?.currency}{(item.price || 0)}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => updateQty(item.id, item.qty - 1)} className="w-7 h-7 flex items-center justify-center bg-gray-100 rounded hover:bg-gray-200 text-gray-600"><Minus size={14}/></button>
-                  <input type="number" step="any" value={item.qty} onChange={(e) => updateQty(item.id, e.target.value)} className="w-14 text-center border rounded py-1 text-sm font-medium focus:ring-1 focus:ring-primary outline-none" />
-                  <span className="text-xs text-gray-500 w-6">{item.unit || 'Pcs'}</span>
-                  <button onClick={() => updateQty(item.id, item.qty + 1)} className="w-7 h-7 flex items-center justify-center bg-gray-100 rounded hover:bg-gray-200 text-gray-600"><Plus size={14}/></button>
-                </div>
-                <div className="w-16 text-right font-bold text-sm ml-2">{profile?.currency}{((item.price || 0) * item.qty).toFixed(2)}</div>
-                <button onClick={() => setCart(cart.filter(c => c.id !== item.id))} className="ml-3 text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-              </div>
-            ))}
-            {cart.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">Cart is empty. Click items to add.</div>}
-          </div>
-        </div>
-
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-3">
-          <div className="flex gap-2">
-            <input type="text" placeholder="Customer Name" className="w-1/2 border rounded-lg px-3 py-2 text-sm focus:ring-primary focus:border-primary outline-none" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
-            <input type="text" placeholder="Phone Number" className="w-1/2 border rounded-lg px-3 py-2 text-sm focus:ring-primary focus:border-primary outline-none" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div><label className="block text-xs text-gray-500 mb-1">Disc (%)</label><input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none" value={settings.discount} onChange={e => setSettings({...settings, discount: Number(e.target.value)})} /></div>
-            <div><label className="block text-xs text-gray-500 mb-1">GST (%)</label><input type="number" className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none" value={settings.gst} onChange={e => setSettings({...settings, gst: Number(e.target.value)})} /></div>
-            <div><label className="block text-xs text-gray-500 mb-1">Payment</label><select className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none" value={settings.paymentMode} onChange={e => setSettings({...settings, paymentMode: e.target.value})}><option>Cash</option><option>UPI</option><option>Card</option></select></div>
-          </div>
-          
-          <div className="pt-3 border-t space-y-1 text-sm">
-            <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{profile?.currency}{subtotal.toFixed(2)}</span></div>
-            {discountAmt > 0 && <div className="flex justify-between text-red-500"><span>Discount</span><span>-{profile?.currency}{discountAmt.toFixed(2)}</span></div>}
-            {gstAmt > 0 && <div className="flex justify-between text-gray-600"><span>GST</span><span>+{profile?.currency}{gstAmt.toFixed(2)}</span></div>}
-            <div className="flex justify-between text-xl font-bold text-gray-900 pt-2 border-t mt-2"><span>Total</span><span>{profile?.currency}{total.toFixed(2)}</span></div>
-          </div>
-        </div>
-
-        <button onClick={handleGenerate} disabled={generating || cart.length === 0} className="w-full py-3 bg-primary text-white text-lg font-bold rounded-xl shadow-md hover:bg-primary-dark transition disabled:opacity-50">
-          {generating ? 'Generating...' : 'Generate Bill'}
+      {!isCartOpen && (
+        <button onClick={() => setIsCartOpen(true)} className="fixed bottom-6 right-6 md:bottom-10 md:right-10 z-30 bg-gray-900 text-white p-4 rounded-full shadow-2xl hover:scale-105 hover:bg-black transition-all flex items-center justify-center border-4 border-white">
+          <ShoppingCart size={28} />
+          {cart.length > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-black w-6 h-6 flex items-center justify-center rounded-full border-2 border-white">{cart.length}</span>}
         </button>
-      </div>
+      )}
+
+      <CartSidebar isOpen={isCartOpen} toggleCart={() => setIsCartOpen(false)} cart={cart} updateQty={updateQty} sanitizeQty={sanitizeQty} updatePrice={updatePrice} sanitizePrice={sanitizePrice} removeCartItem={removeCartItem} customer={customer} setCustomer={setCustomer} settings={settings} setSettings={setSettings} finance={finance} setFinance={setFinance} subtotal={subtotal} discountAmt={discountAmt} totalGstAmt={totalGstAmt} totalPakka={totalPakka} drafts={drafts} clearDraft={clearActiveSession} holdCurrentBill={holdCurrentBill} clearActiveSession={clearActiveSession} handleCheckout={handleCheckout} generating={generating} setIsDraftsModalOpen={setIsDraftsModalOpen} currency={profile?.currency || '₹'} />
+
+      <DraftsModal isOpen={isDraftsModalOpen} onClose={() => setIsDraftsModalOpen(false)} drafts={drafts} onLoadDraft={resumeDraft} onDeleteDraft={deleteDraft} currency={profile?.currency || '₹'} />
     </div>
   );
 }
