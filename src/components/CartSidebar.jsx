@@ -7,9 +7,9 @@ export default function CartSidebar({
   handleCheckout, generating, setIsDraftsModalOpen, currency
 }) {
   
-  // Custom Handler to PREVENT Alphabets (e, -, +)
+  // Custom Handler to PREVENT Alphabets (e, -, +) AND Arrow Keys (Up/Down)
   const handleKeyDown = (e) => {
-    if (['e', 'E', '+', '-'].includes(e.key)) {
+    if (['e', 'E', '+', '-', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
     }
   };
@@ -72,7 +72,7 @@ export default function CartSidebar({
                         min="0"
                         onKeyDown={handleKeyDown}
                         className="w-14 text-center text-sm font-black outline-none border-x border-gray-200 focus:bg-blue-50 focus:text-blue-700 transition" 
-                        value={item.qty === 0 ? '' : item.qty} // Remove 0 when empty
+                        value={item.qty === 0 ? '' : item.qty} 
                         onChange={(e) => updateQty(item.id, item.soldImei, e.target.value)} 
                         onBlur={(e) => sanitizeQty(item.id, item.soldImei, e.target.value)} 
                       />
@@ -90,7 +90,7 @@ export default function CartSidebar({
                         min="0"
                         onKeyDown={handleKeyDown}
                         className="w-24 text-right font-black text-sm text-yellow-900 bg-transparent px-3 py-2 outline-none" 
-                        value={item.cartPrice === 0 ? '' : item.cartPrice} // Remove 0 when empty
+                        value={item.cartPrice === 0 ? '' : item.cartPrice} 
                         onChange={(e) => updatePrice(item.id, item.soldImei, e.target.value)} 
                         onBlur={(e) => sanitizePrice(item.id, item.soldImei, e.target.value)} 
                       />
@@ -156,6 +156,7 @@ export default function CartSidebar({
             {generating ? 'Processing...' : 'Pakka Bill'}
           </button>
         </div>
+
       </div>
     </>
   );

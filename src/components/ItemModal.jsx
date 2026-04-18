@@ -2,13 +2,26 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
 export default function ItemModal({ isOpen, onClose, onSave, item }) {
-  const defaultState = { name: '', category: 'Mobile', price: 0, stock: 0, minStock: 2, sku: '', unit: 'Pcs', ram: '', rom: '', color: '', imei: '' };
+  const defaultState = { 
+    name: '', category: 'Mobile', price: 0, stock: 0, minStock: 2, 
+    sku: '', unit: 'Pcs', ram: '', rom: '', color: '', imei: '' 
+  };
+  
   const [formData, setFormData] = useState(defaultState);
 
+  // Load data when opening in Add/Edit mode
   useEffect(() => {
     if (item) setFormData({ ...defaultState, ...item });
     else setFormData(defaultState);
   }, [item, isOpen]);
+
+  // SMART LOGIC: Auto-calculate stock based on IMEI count for Mobiles
+  useEffect(() => {
+    if (formData.category === 'Mobile') {
+      const imeiList = formData.imei ? formData.imei.split(',').map(i => i.trim()).filter(Boolean) : [];
+      setFormData(prev => ({ ...prev, stock: imeiList.length, unit: 'Pcs' }));
+    }
+  }, [formData.imei, formData.category]);
 
   if (!isOpen) return null;
 
@@ -16,70 +29,157 @@ export default function ItemModal({ isOpen, onClose, onSave, item }) {
     e.preventDefault();
     onSave({ 
       ...formData, 
-      price: Number(formData.price), 
-      stock: Number(formData.stock), 
-      minStock: Number(formData.minStock) 
+      price: Number(formData.price || 0), 
+      stock: Number(formData.stock || 0), 
+      minStock: Number(formData.minStock || 0) 
     });
   };
 
+  // Safe handler to prevent bad input in number fields
+  const handleKeyDown = (e) => {
+    if (['e', 'E', '+', '-', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="flex justify-between items-center p-4 border-b bg-gray-50">
-          <h2 className="text-lg font-bold text-gray-800">{item ? 'Edit Item' : 'Add New Item'}</h2>
-          <button onClick={onClose}><X className="text-gray-500 hover:text-red-500 transition" /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        
+        {/* HEADER */}
+        <div className="flex justify-between items-center p-5 border-b bg-gray-50">
+          <h2 className="text-xl font-black text-gray-800 tracking-tight">{item ? 'Edit Product' : 'Add New Product'}</h2>
+          <button onClick={onClose} className="p-1.5 bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-red-100 rounded-full transition">
+            <X size={20} />
+          </button>
         </div>
         
-        <div className="p-4 overflow-y-auto flex-1">
-          <form id="itemForm" onSubmit={handleSubmit} className="space-y-4">
+        {/* SCROLLABLE FORM BODY */}
+        <div className="p-5 overflow-y-auto flex-1 bg-white">
+          <form id="itemForm" onSubmit={handleSubmit} className="space-y-5">
+            
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 md:col-span-1">
-                <label className="block text-sm font-medium mb-1 text-gray-700">Category</label>
-                <select className="w-full border rounded-lg px-3 py-2 bg-white focus:ring-primary focus:border-primary" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Category</label>
+                <select 
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 bg-gray-50 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none transition-all font-bold text-gray-800" 
+                  value={formData.category} 
+                  onChange={e => setFormData({...formData, category: e.target.value})}
+                >
                   <option value="Mobile">Mobile Phone</option>
                   <option value="Cover">Mobile Cover</option>
                   <option value="Glass">Tempered Glass</option>
-                  <option value="Accessories">Accessories (Charger, Earphone)</option>
+                  <option value="Accessories">Accessories</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
               <div className="col-span-2 md:col-span-1">
-                <label className="block text-sm font-medium mb-1 text-gray-700">Item / Model Name</label>
-                <input required className="w-full border rounded-lg px-3 py-2 focus:ring-primary focus:border-primary" placeholder="e.g. iPhone 15 / Samsung S23" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Product / Model Name</label>
+                <input 
+                  required 
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 bg-gray-50 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none transition-all font-bold text-gray-900 placeholder-gray-400" 
+                  placeholder="e.g. iPhone 15 / Galaxy S23" 
+                  value={formData.name} 
+                  onChange={e => setFormData({...formData, name: e.target.value})} 
+                />
               </div>
             </div>
 
             {/* DEDICATED MOBILE SECTION */}
             {formData.category === 'Mobile' && (
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 space-y-3">
-                <h3 className="text-xs font-bold text-blue-800 uppercase tracking-wider">Mobile Specifications</h3>
+              <div className="bg-blue-50 p-5 rounded-2xl border border-blue-200 space-y-4 shadow-inner">
+                <h3 className="text-[10px] font-black text-blue-800 uppercase tracking-widest border-b border-blue-200 pb-2">Mobile Specifications</h3>
+                
                 <div className="grid grid-cols-3 gap-3">
-                  <div><label className="block text-xs font-medium mb-1">RAM</label><input placeholder="e.g. 8GB" className="w-full border rounded px-2 py-1.5 text-sm" value={formData.ram} onChange={e => setFormData({...formData, ram: e.target.value})} /></div>
-                  <div><label className="block text-xs font-medium mb-1">ROM (Storage)</label><input placeholder="e.g. 128GB" className="w-full border rounded px-2 py-1.5 text-sm" value={formData.rom} onChange={e => setFormData({...formData, rom: e.target.value})} /></div>
-                  <div><label className="block text-xs font-medium mb-1">Color</label><input placeholder="e.g. Black" className="w-full border rounded px-2 py-1.5 text-sm" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} /></div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-1">RAM</label>
+                    <input placeholder="8GB" className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm font-bold text-blue-900 outline-none focus:ring-2 focus:ring-blue-400 bg-white" value={formData.ram} onChange={e => setFormData({...formData, ram: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-1">ROM (Storage)</label>
+                    <input placeholder="256GB" className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm font-bold text-blue-900 outline-none focus:ring-2 focus:ring-blue-400 bg-white" value={formData.rom} onChange={e => setFormData({...formData, rom: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-1">Color</label>
+                    <input placeholder="Black" className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm font-bold text-blue-900 outline-none focus:ring-2 focus:ring-blue-400 bg-white" value={formData.color} onChange={e => setFormData({...formData, color: e.target.value})} />
+                  </div>
                 </div>
+
                 <div>
-                  <label className="block text-xs font-medium mb-1">IMEI Numbers (Comma separated for multiple stock)</label>
-                  <textarea rows="2" placeholder="e.g. 8392837492..., 8392837493..." className="w-full border rounded px-2 py-1.5 text-sm" value={formData.imei} onChange={e => setFormData({...formData, imei: e.target.value})}></textarea>
+                  <label className="block text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-1">IMEI Numbers (Comma separated)</label>
+                  <textarea 
+                    rows="3" 
+                    placeholder="Scan or type IMEIs here. Example: 8392837492, 8392837493" 
+                    className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm font-mono font-bold text-blue-900 outline-none focus:ring-2 focus:ring-blue-400 leading-relaxed bg-white shadow-sm" 
+                    value={formData.imei} 
+                    onChange={e => setFormData({...formData, imei: e.target.value})}
+                  ></textarea>
+                  <p className="text-[10px] text-blue-600 font-bold mt-1.5 flex justify-between">
+                    <span>*Stock quantity will auto-update based on IMEIs entered.</span>
+                    <span className="bg-blue-200 px-2 py-0.5 rounded-full text-blue-800">Count: {formData.imei ? formData.imei.split(',').filter(i=>i.trim()).length : 0}</span>
+                  </p>
                 </div>
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-4">
-              <div><label className="block text-sm font-medium mb-1 text-gray-700">Unit</label>
-                <select className="w-full border rounded-lg px-3 py-2 bg-white" value={formData.unit} onChange={e => setFormData({...formData, unit: e.target.value})}>
-                  <option value="Pcs">Pcs (Pieces)</option><option value="Box">Box</option><option value="Kg">Kg</option><option value="Ltr">Ltr</option>
+              <div>
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Unit Type</label>
+                <select 
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 bg-gray-50 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none transition-all font-bold text-gray-800 disabled:opacity-50" 
+                  value={formData.unit} 
+                  onChange={e => setFormData({...formData, unit: e.target.value})}
+                  disabled={formData.category === 'Mobile'} 
+                >
+                  {/* REMOVED Kg AND Ltr - ONLY MOBILE SHOP UNITS */}
+                  <option value="Pcs">Pcs (Pieces)</option>
+                  <option value="Box">Box</option>
+                  <option value="Pkt">Pkt (Packet)</option>
                 </select>
               </div>
-              <div><label className="block text-sm font-medium mb-1 text-gray-700">SKU / Barcode</label><input className="w-full border rounded-lg px-3 py-2" value={formData.sku} onChange={e => setFormData({...formData, sku: e.target.value})} /></div>
-              <div><label className="block text-sm font-medium mb-1 text-gray-700">Price (₹)</label><input type="number" step="0.01" required className="w-full border rounded-lg px-3 py-2" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} /></div>
-              <div><label className="block text-sm font-medium mb-1 text-gray-700">Stock Qty</label><input type="number" step="any" required className="w-full border rounded-lg px-3 py-2" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} /></div>
+              
+              <div>
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">SKU / Barcode</label>
+                <input 
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 bg-gray-50 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none transition-all font-bold text-gray-900" 
+                  placeholder="Optional"
+                  value={formData.sku} 
+                  onChange={e => setFormData({...formData, sku: e.target.value})} 
+                />
+              </div>
+              
+              <div>
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">Selling Price (₹)</label>
+                <input 
+                  type="number" step="any" min="0" required onKeyDown={handleKeyDown}
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 bg-gray-50 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary outline-none transition-all font-black text-primary text-lg" 
+                  value={formData.price === 0 ? '' : formData.price} 
+                  onChange={e => setFormData({...formData, price: e.target.value})} 
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-black text-gray-500 uppercase tracking-wider mb-1.5">
+                  Current Stock {formData.category === 'Mobile' && <span className="text-red-500 lowercase normal-case text-[9px]">(Auto)</span>}
+                </label>
+                <input 
+                  type="number" step="any" min="0" required onKeyDown={handleKeyDown}
+                  className={`w-full border-2 rounded-xl px-4 py-2.5 outline-none transition-all font-black text-lg ${formData.category === 'Mobile' ? 'bg-gray-200 border-gray-300 text-gray-500 cursor-not-allowed' : 'bg-gray-50 border-gray-200 focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary text-gray-900'}`}
+                  value={formData.stock === 0 && formData.category !== 'Mobile' ? '' : formData.stock} 
+                  onChange={e => setFormData({...formData, stock: e.target.value})}
+                  readOnly={formData.category === 'Mobile'} 
+                  title={formData.category === 'Mobile' ? "Stock is auto-calculated based on IMEI numbers" : ""}
+                />
+              </div>
             </div>
           </form>
         </div>
         
-        <div className="p-4 border-t bg-gray-50">
-          <button type="submit" form="itemForm" className="w-full bg-primary text-white font-bold py-3 rounded-xl shadow-md hover:bg-primary-dark transition">Save Item</button>
+        {/* FOOTER */}
+        <div className="p-5 border-t bg-gray-50 flex justify-end">
+          <button type="submit" form="itemForm" className="w-full bg-gray-900 text-white font-black py-3.5 rounded-xl shadow-lg hover:bg-black hover:shadow-xl transition-all uppercase tracking-widest text-sm">
+            Save Product
+          </button>
         </div>
       </div>
     </div>
