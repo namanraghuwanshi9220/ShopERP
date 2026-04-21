@@ -20,35 +20,6 @@ export default function GlobalCartUI() {
   const cartState = useCartStore(); 
   
   const [generating, setGenerating] = useState(false);
-  const barcodeBuffer = useRef('');
-  const lastKeyTime = useRef(Date.now());
-
-  // GLOBAL BARCODE LISTENER (Works on all pages!)
-  useEffect(() => {
-    const handleGlobalKeyDown = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      const currentTime = Date.now();
-      if (currentTime - lastKeyTime.current > 50) barcodeBuffer.current = '';
-      lastKeyTime.current = currentTime;
-
-      if (e.key === 'Enter') {
-        if (barcodeBuffer.current.length >= 3) {
-          const matchedItem = items.find(i => i.stock > 0 && (i.sku?.toLowerCase() === barcodeBuffer.current.toLowerCase() || i.imei?.toLowerCase().includes(barcodeBuffer.current.toLowerCase())));
-          if (matchedItem) {
-            cartState.processAddToCart(matchedItem, matchedItem.category === 'Mobile' ? barcodeBuffer.current : '', addToast);
-            addToast(`Scanned: ${matchedItem.name}`, "success");
-          } else {
-            addToast(`Item not found or out of stock: ${barcodeBuffer.current}`, "error");
-          }
-        }
-        barcodeBuffer.current = '';
-      } else if (e.key.length === 1) {
-        barcodeBuffer.current += e.key;
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [items, cartState, addToast]);
 
   const subtotal = cartState.cart.reduce((acc, item) => acc + ((Number(item.cartPrice) || 0) * (Number(item.qty) || 1)), 0);
   const discountAmt = subtotal * ((Number(cartState.settings.discount) || 0) / 100);
@@ -57,7 +28,9 @@ export default function GlobalCartUI() {
   const totalPakka = afterDiscount + totalGstAmt;
 
   const handleCheckout = async (isEstimate) => {
-    if (cartState.cart.length === 0) return addToast("Cart is empty", "error");
+    // PREVENT DOUBLE CLICK
+    if (generating) return;
+    
     setGenerating(true);
     try {
       const payload = {
@@ -65,18 +38,26 @@ export default function GlobalCartUI() {
         items: cartState.cart.map(c => ({ id: c.id, name: c.name || "", price: Number(c.cartPrice || 0), qty: Number(c.qty || 1), unit: c.unit || 'Pcs', category: c.category || "", ram: c.ram || "", rom: c.rom || "", color: c.color || "", soldImei: c.soldImei || "" })),
         subtotal: Number(subtotal || 0), discount: Number(discountAmt || 0), gstPercent: isEstimate ? 0 : Number(cartState.settings.gst || 0), gstAmt: isEstimate ? 0 : Number(totalGstAmt || 0), cgstAmt: isEstimate ? 0 : Number((totalGstAmt / 2) || 0), sgstAmt: isEstimate ? 0 : Number((totalGstAmt / 2) || 0), total: isEstimate ? Number(afterDiscount || 0) : Number(totalPakka || 0), paymentMode: cartState.settings.paymentMode || "Cash", isEstimate
       };
+      
       if (cartState.settings.paymentMode === 'Finance') {
         payload.financeDetails = { provider: cartState.finance.provider, downPayment: Number(cartState.finance.downPayment || 0), emiMonths: Number(cartState.finance.emiMonths || 0), emiAmount: Number(cartState.finance.emiAmount || 0) };
       }
+
       let finalBill = isEstimate ? await generateEstimate(user.uid, payload, cartState.cart) : await generateBill(user.uid, payload, cartState.cart);
+      
       if (!isEstimate) addLocalBill(finalBill);
       
       cartState.setPrintedBill(finalBill); 
       cartState.clearActiveSession(profile?.defaultGST || 0); 
       cartState.setIsCartOpen(false); 
+      
       if (user) await fetchItems(user.uid); 
       addToast(isEstimate ? "Estimate Created!" : "Bill Generated!", "success");
-    } catch (error) { addToast("Error processing request", 'error'); } finally { setGenerating(false); }
+    } catch (error) { 
+      addToast("Error processing request", 'error'); 
+    } finally { 
+      setGenerating(false); 
+    }
   };
 
   if (cartState.printedBill) return (

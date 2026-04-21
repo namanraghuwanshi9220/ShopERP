@@ -1,4 +1,6 @@
+import { useState, useRef } from 'react';
 import { ShoppingCart, Clock, Save, Trash2, Edit2, Minus, Plus, User, Landmark, FileText, X } from 'lucide-react';
+import { useToastStore } from '../store/useToastStore';
 
 export default function CartSidebar({
   isOpen, toggleCart, cart, updateQty, sanitizeQty, updatePrice, sanitizePrice, removeCartItem,
@@ -7,19 +9,66 @@ export default function CartSidebar({
   handleCheckout, generating, setIsDraftsModalOpen, currency
 }) {
   
-  // Custom Handler to PREVENT Alphabets (e, -, +) AND Arrow Keys (Up/Down)
+  // VALIDATION STATE & REFS
+  const [errors, setErrors] = useState({ name: false, phone: false });
+  const nameRef = useRef(null);
+  const phoneRef = useRef(null);
+  
+  const addToast = useToastStore((state) => state.addToast);
+
   const handleKeyDown = (e) => {
     if (['e', 'E', '+', '-', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
     }
   };
 
+  // STRICT VALIDATOR FUNCTION
+  const validateAndCheckout = (isEstimate) => {
+    if (cart.length === 0) {
+      addToast("Cart is empty! Add products first.", "error");
+      return;
+    }
+
+    let hasError = false;
+    let newErrors = { name: false, phone: false };
+
+    // Check if Name is missing
+    if (!customer.name || customer.name.trim() === '') {
+      newErrors.name = true;
+      hasError = true;
+    }
+    
+    // Check if Phone is missing
+    if (!customer.phone || String(customer.phone).trim() === '') {
+      newErrors.phone = true;
+      hasError = true;
+    }
+
+    setErrors(newErrors);
+
+    // If missing, STOP HERE and show red borders
+    if (hasError) {
+      addToast("Customer Name and Phone are mandatory!", "error");
+      // Auto Focus cursor to the empty box
+      if (newErrors.name) nameRef.current?.focus();
+      else if (newErrors.phone) phoneRef.current?.focus();
+      return;
+    }
+
+    // IF ALL GOOD, PROCEED TO DATABASE!
+    handleCheckout(isEstimate);
+  };
+
+  // Automatically remove red border when user starts typing
+  const handleCustomerChange = (field, value) => {
+    setCustomer(prev => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors(prev => ({ ...prev, [field]: false }));
+  };
+
   return (
     <>
-      {/* OVERLAY FOR MOBILE */}
-      {isOpen && <div className="fixed inset-0 bg-black/40 z-40 transition-opacity" onClick={toggleCart}></div>}
+      {isOpen && <div className="fixed inset-0 bg-black/50 z-40 transition-opacity backdrop-blur-sm" onClick={toggleCart}></div>}
 
-      {/* RIGHT SIDEBAR DRAWER */}
       <div className={`fixed inset-y-0 right-0 z-50 w-full md:w-[480px] bg-gray-50 shadow-2xl border-l border-gray-200 transform transition-transform duration-300 ease-in-out flex flex-col ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         
         {/* HEADER */}
@@ -62,38 +111,19 @@ export default function CartSidebar({
                 </div>
 
                 <div className="flex items-end justify-between border-t border-gray-100 pt-3">
-                  {/* QUANTITY EDITOR */}
                   <div>
                     <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1 block">Quantity</span>
                     <div className="flex items-center border border-gray-300 rounded-lg bg-white overflow-hidden shadow-sm">
                       <button onClick={() => sanitizeQty(item.id, item.soldImei, (Number(item.qty) || 0) - 1)} className="w-10 h-9 flex items-center justify-center bg-gray-50 hover:bg-gray-200 text-gray-700 transition"><Minus size={16}/></button>
-                      <input 
-                        type="number" 
-                        min="0"
-                        onKeyDown={handleKeyDown}
-                        className="w-14 text-center text-sm font-black outline-none border-x border-gray-200 focus:bg-blue-50 focus:text-blue-700 transition" 
-                        value={item.qty === 0 ? '' : item.qty} 
-                        onChange={(e) => updateQty(item.id, item.soldImei, e.target.value)} 
-                        onBlur={(e) => sanitizeQty(item.id, item.soldImei, e.target.value)} 
-                      />
+                      <input type="number" min="0" onKeyDown={handleKeyDown} className="w-14 text-center text-sm font-black outline-none border-x border-gray-200 focus:bg-blue-50 focus:text-blue-700 transition" value={item.qty === 0 ? '' : item.qty} onChange={(e) => updateQty(item.id, item.soldImei, e.target.value)} onBlur={(e) => sanitizeQty(item.id, item.soldImei, e.target.value)} />
                       <button onClick={() => sanitizeQty(item.id, item.soldImei, (Number(item.qty) || 0) + 1)} className="w-10 h-9 flex items-center justify-center bg-gray-50 hover:bg-gray-200 text-gray-700 transition"><Plus size={16}/></button>
                     </div>
                   </div>
-
-                  {/* PRICE EDITOR */}
                   <div className="flex flex-col items-end">
                     <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Edit2 size={10} className="text-primary"/> Unit Price</span>
                     <div className="flex items-center bg-yellow-50 border border-yellow-300 rounded-lg overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-yellow-400 transition-all">
                       <span className="px-3 py-2 text-sm text-yellow-800 font-black bg-yellow-100 border-r border-yellow-300">{currency}</span>
-                      <input 
-                        type="number" 
-                        min="0"
-                        onKeyDown={handleKeyDown}
-                        className="w-24 text-right font-black text-sm text-yellow-900 bg-transparent px-3 py-2 outline-none" 
-                        value={item.cartPrice === 0 ? '' : item.cartPrice} 
-                        onChange={(e) => updatePrice(item.id, item.soldImei, e.target.value)} 
-                        onBlur={(e) => sanitizePrice(item.id, item.soldImei, e.target.value)} 
-                      />
+                      <input type="number" min="0" onKeyDown={handleKeyDown} className="w-24 text-right font-black text-sm text-yellow-900 bg-transparent px-3 py-2 outline-none" value={item.cartPrice === 0 ? '' : item.cartPrice} onChange={(e) => updatePrice(item.id, item.soldImei, e.target.value)} onBlur={(e) => sanitizePrice(item.id, item.soldImei, e.target.value)} />
                     </div>
                   </div>
                 </div>
@@ -107,17 +137,36 @@ export default function CartSidebar({
             )}
           </div>
 
-          {/* CHECKOUT SETTINGS */}
+          {/* CHECKOUT SETTINGS WITH STRICT VALIDATION UI */}
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mt-2">
             <div className="space-y-3 mb-3">
               <div className="flex items-center gap-2 mb-2 text-gray-800">
-                <User size={18} /><h3 className="font-black text-sm uppercase tracking-wider">Customer Details</h3>
+                <User size={18} /><h3 className="font-black text-sm uppercase tracking-wider">Customer Details <span className="text-red-500">*</span></h3>
               </div>
               <div className="flex gap-2">
-                <input type="text" placeholder="Customer Name" className="w-1/2 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none font-bold" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
-                <input type="number" onKeyDown={handleKeyDown} placeholder="Phone Number" className="w-1/2 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none font-bold" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
+                <input 
+                  ref={nameRef}
+                  type="text" 
+                  placeholder="Customer Name *" 
+                  className={`w-1/2 border rounded-lg px-3 py-2.5 text-sm font-bold outline-none shadow-sm transition-all ${
+                    errors.name ? 'border-red-500 bg-red-50 ring-2 ring-red-200 placeholder-red-300' : 'border-gray-300 focus:ring-2 focus:ring-primary'
+                  }`} 
+                  value={customer.name} 
+                  onChange={e => handleCustomerChange('name', e.target.value)} 
+                />
+                <input 
+                  ref={phoneRef}
+                  type="number" 
+                  onKeyDown={handleKeyDown} 
+                  placeholder="Phone Number *" 
+                  className={`w-1/2 border rounded-lg px-3 py-2.5 text-sm font-bold outline-none shadow-sm transition-all ${
+                    errors.phone ? 'border-red-500 bg-red-50 ring-2 ring-red-200 placeholder-red-300' : 'border-gray-300 focus:ring-2 focus:ring-primary'
+                  }`} 
+                  value={customer.phone} 
+                  onChange={e => handleCustomerChange('phone', e.target.value)} 
+                />
               </div>
-              <input type="text" placeholder="Full Address (Optional)" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none font-medium text-gray-700 bg-gray-50" value={customer.address} onChange={e => setCustomer({...customer, address: e.target.value})} />
+              <input type="text" placeholder="Full Address (Optional)" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none font-medium text-gray-700 bg-gray-50 shadow-sm" value={customer.address} onChange={e => setCustomer({...customer, address: e.target.value})} />
             </div>
             
             <div className="grid grid-cols-3 gap-2 pt-3 border-t border-gray-100">
@@ -147,12 +196,20 @@ export default function CartSidebar({
           </div>
         </div>
 
-        {/* BOTTOM BUTTONS */}
-        <div className="p-4 bg-white border-t border-gray-200 flex gap-3 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)]">
-          <button onClick={() => handleCheckout(true)} disabled={generating || cart.length === 0} className="w-1/3 py-4 bg-white border-2 border-gray-300 text-gray-700 text-sm font-black rounded-xl hover:bg-gray-100 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm">
+        {/* BOTTOM BUTTONS - USING THE VALIDATOR FUNCTION */}
+        <div className="p-4 bg-white border-t border-gray-200 flex gap-3 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] relative z-20">
+          <button 
+            onClick={() => validateAndCheckout(true)} 
+            disabled={generating || cart.length === 0} 
+            className="w-1/3 py-4 bg-white border-2 border-gray-300 text-gray-700 text-sm font-black rounded-xl hover:bg-gray-100 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+          >
             <FileText size={18} /> Kaccha
           </button>
-          <button onClick={() => handleCheckout(false)} disabled={generating || cart.length === 0} className="w-2/3 py-4 bg-gray-900 text-white text-lg font-black rounded-xl shadow-xl hover:bg-black transition-all disabled:opacity-50 tracking-wider">
+          <button 
+            onClick={() => validateAndCheckout(false)} 
+            disabled={generating || cart.length === 0} 
+            className="w-2/3 py-4 bg-gray-900 text-white text-lg font-black rounded-xl shadow-xl hover:bg-black transition-all disabled:opacity-50 tracking-wider"
+          >
             {generating ? 'Processing...' : 'Pakka Bill'}
           </button>
         </div>
